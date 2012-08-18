@@ -5,9 +5,13 @@ from django.db.models import signals
 from django.db import models
 from django.conf import settings
 
-from feedjack.models import Site, Post
+from feedjack.models import Site, Feed, Post
 
+import itertools as it, operator as op, functools as ft
 from xmlrpclib import ServerProxy, Error as XMLRPCError
+
+import logging
+log = logging.getLogger(__name__)
 
 
 # See wp_newPost in wp-includes/class-wp-xmlrpc-server.php for details on these.
@@ -49,26 +53,29 @@ class Export(models.Model):
 			' Use django wp_getUsersBlogs management command'
 				' ("./manage.py wp_getUsersBlogs --help" for more info)'
 				' to get a list of these (along with blog-specific XML-RPC URLs).' )
-	user = models.CharField(max_length=63)
+	username = models.CharField(max_length=63)
 	password = models.CharField(max_length=63)
 
 	class Meta:
-		ordering = 'url', 'blog_id', 'user'
+		ordering = 'url', 'blog_id', 'username'
 		unique_together = (('url', 'blog_id'),)
 
 	def __unicode__(self):
-		return '{0.url} (user: {0.user}, blog_id: {0.blog_id})'.format(self)
+		return '{0.url} (user: {0.username}, blog_id: {0.blog_id})'.format(self)
 
 	def send(self, posts):
 		# TODO: export through AtomPub as well
+		# TODO: per-post error handling to prevent exporting the same posts
 		server = ServerProxy(self.url, use_datetime=True)
 		for post in posts:
+			log.debug('Exporting post {!r} to {!r}'.format(post, self))
 			post_data = default_post_parameters.copy()
 			post_data.update(
 				post_title=post.title,
 				post_content=post.content,
 				post_date=post.date_modified )
-			server.wp.newPost(self.blog_id, self.username, self.password, post_data)
+			result = server.wp.newPost(self.blog_id, self.username, self.password, post_data)
+			log.debug('Exporting post {!r} to {!r}'.format(post, self))
 
 
 class ExportSubscriber(models.Model):
@@ -89,18 +96,27 @@ class ExportSubscriber(models.Model):
 
 dirty_posts = set()
 
-def post_update_handler(self, sender, instance, created, **kwz):
-	if created: dirty_posts.add(instance) # TODO: processing of modified posts
+def post_update_handler(sender, instance, created=False, **kwz):
+	# TODO: processing of modified posts
+	if created:
+		log.debug('Detected new post to export: {!r}'.format(instance))
+		dirty_posts.add(instance)
 
-def site_update_handler(self, site, **kwz):
-	exports = Export.objects.filter(subscriber_set__feedjack_site=site)
+def feed_update_handler(sender, instance, **kwz):
+	exports = Export.objects.filter(subscriber_set__feed=instance)
 	if not exports: return
-	posts = list(Post.objects.filter(id__in=dirty_posts, feed__subscriber_set__site=site))
+	posts = list(instance.posts.filter(id__in=set(it.imap(op.attrgetter('id'), dirty_posts))))
 	if not posts: return
 	# TODO: some queue (celery?) here to handle transient export errors
-	for exporter in exports: exporter.send(posts)
+	for n, exporter in enumerate(exports, 1):
+		log.debug('Exporting {} posts to {!r} ({}/{})'.format(len(posts), exporter, n, len(exports)))
+		exporter.send(posts)
 	dirty_posts.difference_update(posts)
+	log.debug('{} unexported posts left'.format(len(dirty_posts)))
 
-def connect_to_signals(self):
+def connect_to_signals():
 	signals.post_save.connect(post_update_handler, sender=Post)
-	Site.signal_update.connect(site_update_handler)
+	Feed.signal_updated.connect(feed_update_handler)
+	log.debug('Connected exports to feedjack signals')
+
+connect_to_signals()
