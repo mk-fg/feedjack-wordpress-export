@@ -1,11 +1,12 @@
 #-*- coding: utf-8 -*-
-from __future__ import unicode_literals, print_function
 
+from django.core.exceptions import ObjectDoesNotExist
 from django.db.models import signals
 from django.db import models
 from django.conf import settings
 
 from feedjack.models import Site, Feed, Post
+from celery import Task, task
 
 import itertools as it, operator as op, functools as ft
 from xmlrpclib import ServerProxy, Error as XMLRPCError
@@ -22,6 +23,7 @@ default_post_parameters = dict(
 	comment_status = 'open', # 'closed'
 	ping_status = 'open', # 'closed'
 )
+
 # post_title = None,
 # post_content = None,
 # post_date = None, # datetime, can also be submitted as post_date_gmt
@@ -61,21 +63,19 @@ class Export(models.Model):
 		unique_together = (('url', 'blog_id'),)
 
 	def __unicode__(self):
-		return '{0.url} (user: {0.username}, blog_id: {0.blog_id})'.format(self)
+		return u'{0.url} (user: {0.username}, blog_id: {0.blog_id})'.format(self)
 
-	def send(self, posts):
+	def send(self, post, wp_link=None):
 		# TODO: export through AtomPub as well
-		# TODO: per-post error handling to prevent exporting the same posts
-		server = ServerProxy(self.url, use_datetime=True)
-		for post in posts:
-			log.debug('Exporting post {!r} to {!r}'.format(post, self))
-			post_data = default_post_parameters.copy()
-			post_data.update(
-				post_title=post.title,
-				post_content=post.content,
-				post_date=post.date_modified )
-			result = server.wp.newPost(self.blog_id, self.username, self.password, post_data)
-			log.debug('Exporting post {!r} to {!r}'.format(post, self))
+		# TODO: some error handling?
+		if wp_link is None: wp_link = ServerProxy(self.url, use_datetime=True)
+		log.debug('Exporting post {!r} to {!r}'.format(post, self))
+		post_data = default_post_parameters.copy()
+		post_data.update(
+			post_title=post.title,
+			post_content=post.content,
+			post_date=post.date_modified )
+		return wp_link.wp.newPost(self.blog_id, self.username, self.password, post_data)
 
 
 class ExportSubscriber(models.Model):
@@ -90,8 +90,31 @@ class ExportSubscriber(models.Model):
 		unique_together = (('export', 'feed'),)
 
 	def __unicode__(self):
-		return '{0.feed} to {0.export}{1}'.format(
-			self, ' (INACTIVE)' if not self.is_active else '' )
+		return u'{0.feed} to {0.export}{1}'.format(
+			self, u' (INACTIVE)' if not self.is_active else u'' )
+
+
+class ExportTask(Task):
+	'Task to push the post to a wordpress instance, defined by export_id.'
+
+	_wp_links = dict()
+	def rpc_link(self, url):
+		if url not in self._wp_links:
+			self._wp_links[url] = ServerProxy(url, use_datetime=True)
+		return self._wp_links[url]
+
+	def run(self, export_id, post_id):
+		# Re-fetch objects here to make sure the most up-to-date version is used
+		try: export, post = Export.objects.get(id=export_id), Post.objects.get(id=post_id)
+		except ObjectDoesNotExist as err:
+			log.warn( 'Received export task for'
+				' non-existing object id(s): export={}, post={}'.format(export_id, post_id) )
+			return
+		try: export.send(post, wp_link=self.rpc_link(export.url))
+		except XMLRPCError as err: raise self.retry(exc=err)
+		log.debug('Post {!r} was successfully exported.'.format(post))
+
+export_post = task(ignore_result=True)(ExportTask)
 
 
 dirty_posts = set()
@@ -107,10 +130,9 @@ def feed_update_handler(sender, instance, **kwz):
 	if not exports: return
 	posts = list(instance.posts.filter(id__in=set(it.imap(op.attrgetter('id'), dirty_posts))))
 	if not posts: return
-	# TODO: some queue (celery?) here to handle transient export errors
 	for n, exporter in enumerate(exports, 1):
 		log.debug('Exporting {} posts to {!r} ({}/{})'.format(len(posts), exporter, n, len(exports)))
-		exporter.send(posts)
+		for post in posts: export_post.delay(exporter.id, post.id)
 	dirty_posts.difference_update(posts)
 	log.debug('{} unexported posts left'.format(len(dirty_posts)))
 
