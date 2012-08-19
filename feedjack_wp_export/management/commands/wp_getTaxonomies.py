@@ -22,7 +22,9 @@ class Command(WPRPCCommand):
 
 	def handle(self, url=None, **optz):
 		server, user, password = self.parse_rpc_endpoint(url, **optz)
-		dump = ft.partial(self.print_data, pretty=not optz.get('dump', False))
+		dump = self.print_data
+		if optz.get('dump', False):
+			dump = ft.partial(dump, machine=optz['dump'])
 		if not optz.get('taxonomy'):
 			dump(server.wp.getTaxonomies(
 				optz['blog_id'], user, password ), header='Taxonomies')

@@ -5,16 +5,22 @@ from django.core.management.base import BaseCommand, CommandError
 
 import itertools as it, operator as op, functools as ft
 from optparse import make_option
-from xmlrpclib import ServerProxy, Error as XMLRPCError
+from xmlrpclib import ServerProxy,\
+	Error as XMLRPCError, Fault as XMLRPCFault
 from pprint import pformat
 import getpass
 
 
 try: from yaml import load, dump
-except ImportError: from json import load, dump
+except ImportError:
+	from json import load, dump
+	dump_is_pretty = False
 else:
-	from yaml import safe_dump
-	dump = ft.partial(safe_dump, default_flow_style=False) # much nicer
+	try: from yaml import safe_dump
+	except ImportError: pass
+	else:
+		dump = ft.partial(safe_dump, default_flow_style=False) # much nicer
+		dump_is_pretty = True
 
 
 class WPRPCCommand(BaseCommand):
@@ -61,8 +67,8 @@ class WPRPCCommand(BaseCommand):
 
 		return server, user, password
 
-	def print_data(self, data, header=None, pretty=True):
-		if not dump:
+	def print_data(self, data, header=None, machine=dump_is_pretty):
+		if not machine:
 			if header: self.stdout.write('{}:\n'.format(header))
 			self.stdout.write('{}\n'.format(pformat(data)))
 		else: dump(data, self.stdout)
