@@ -3,10 +3,18 @@ from __future__ import unicode_literals
 
 from django.core.management.base import BaseCommand, CommandError
 
+import itertools as it, operator as op, functools as ft
 from optparse import make_option
 from xmlrpclib import ServerProxy, Error as XMLRPCError
 from pprint import pformat
 import getpass
+
+
+try: from yaml import load, dump
+except ImportError: from json import load, dump
+else:
+	from yaml import safe_dump
+	dump = ft.partial(safe_dump, default_flow_style=False) # much nicer
 
 
 class WPRPCCommand(BaseCommand):
@@ -53,6 +61,8 @@ class WPRPCCommand(BaseCommand):
 
 		return server, user, password
 
-	def print_data(self, data, header=None):
-		if header: self.stdout.write('{}:\n'.format(header))
-		self.stdout.write('{}\n'.format(pformat(data)))
+	def print_data(self, data, header=None, pretty=True):
+		if not dump:
+			if header: self.stdout.write('{}:\n'.format(header))
+			self.stdout.write('{}\n'.format(pformat(data)))
+		else: dump(data, self.stdout)

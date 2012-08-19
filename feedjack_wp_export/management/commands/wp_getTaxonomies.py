@@ -3,6 +3,7 @@ from __future__ import unicode_literals
 
 from . import WPRPCCommand
 
+import itertools as it, operator as op, functools as ft
 from optparse import make_option
 
 
@@ -14,14 +15,18 @@ class Command(WPRPCCommand):
 			help='ID of blog to query (default: %(default)s).'),
 		make_option('-t', '--taxonomy',
 			help='Get terms for the specified taxonomy name (example: category).'),
+		make_option('-d', '--dump', action='store_true',
+			help='Dump data in a machine-readable format'
+				' (e.g. for "fjwp_import_taxonomies" or "wp_newTerm" commands).'),
 	)
 
 	def handle(self, url=None, **optz):
 		server, user, password = self.parse_rpc_endpoint(url, **optz)
+		dump = ft.partial(self.print_data, pretty=not optz.get('dump', False))
 		if not optz.get('taxonomy'):
-			self.print_data(server.wp.getTaxonomies(
+			dump(server.wp.getTaxonomies(
 				optz['blog_id'], user, password ), header='Taxonomies')
 		else:
-			self.print_data(
+			dump(
 				server.wp.getTerms(optz['blog_id'], user, password, optz['taxonomy']),
 				header='Defined terms for taxonomy {!r}'.format(optz['taxonomy']) )
