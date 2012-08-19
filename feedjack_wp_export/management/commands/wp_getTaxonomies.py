@@ -1,10 +1,9 @@
 # -*- coding: utf-8 -*-
 from __future__ import unicode_literals
 
-from . import WPRPCCommand
-
 import itertools as it, operator as op, functools as ft
-from optparse import make_option
+
+from . import WPRPCCommand, make_option
 
 
 class Command(WPRPCCommand):

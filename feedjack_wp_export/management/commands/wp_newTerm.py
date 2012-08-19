@@ -1,20 +1,21 @@
 # -*- coding: utf-8 -*-
 from __future__ import unicode_literals
 
-from . import WPRPCCommand, CommandError, load, XMLRPCFault
-
 import itertools as it, operator as op, functools as ft
-from optparse import make_option
 import sys
+
+from . import WPRPCCommand, CommandError,\
+	load, XMLRPCFault, make_option
 
 
 class Command(WPRPCCommand):
 
 	help = 'Import new taxonomy terms into a wordpress.\n'\
 		'Source data dump should contain a sequence of mappings containing'\
-			' wordpress taxonomy term attribute values (other keys will just be ignored,'\
-			' also see --strip option) and be piped through stdin or read from specified'\
-			' file (with --dump option).\n'\
+			' wordpress taxonomy term attribute values ("parent" and other keys'\
+			' will just be ignored, also see --strip/--include options, "wp_getTaxonomy"'\
+			' command) and be piped through stdin or read from specified file'\
+			' (with --dump option).\n'\
 		'Data format is JSON or YAML (if PyYAML is available).'
 	option_list = WPRPCCommand.option_list + (
 		make_option('-b', '--blog-id', type='int', default=1,
@@ -23,6 +24,8 @@ class Command(WPRPCCommand):
 			help='Use this taxonomy name for all imported terms (example: category).'),
 		make_option('-s', '--strip', action='append', default=list(),
 			help='Attribute name to strip from imported terms. Can be specified multiple times.'),
+		make_option('-i', '--include', action='append', default=list(),
+			help='Attribute name from imported terms to include. Can be specified multiple times.'),
 		make_option('-e', '--skip-errors', type=int, action='append', default=list(),
 			help='Returned RPC fault codes to ignore'
 				' (example: 500). Can be specified multiple times.'),
@@ -33,11 +36,10 @@ class Command(WPRPCCommand):
 		server, user, password = self.parse_rpc_endpoint(url, **optz)
 		dump = open(optz['dump']) if optz.get('dump') and optz['dump'] != '-' else sys.stdin
 		terms = load(dump)
+		attrs = ['name', 'taxonomy', 'slug', 'description'] + list(optz['include'])
 
 		for term_import in terms:
-			term = dict( (k, term_import[k])
-				for k in ['name', 'taxonomy', 'slug', 'description', 'parent']
-				if k in term_import )
+			term = dict((k, term_import[k]) for k in attrs if k in term_import)
 			if optz.get('taxonomy'): term['taxonomy'] = optz['taxonomy']
 			if 'parent' in term: term['parent'] = int(term['parent'])
 			for k in optz['strip']:

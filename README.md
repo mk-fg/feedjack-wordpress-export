@@ -17,6 +17,10 @@ Installation
 
 * [Django](http://djangoproject.com)
 * [django-celery](http://celeryproject.org)
+
+* (optional) [PyYAML](http://pyyaml.org/wiki/PyYAML) - to export stuff in a sane
+	human-editable format from management commands
+
 * (optional, recommended) [South](http://south.aeracode.org) - for automated
 	database schema updates
 

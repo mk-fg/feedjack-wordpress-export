@@ -1,14 +1,14 @@
 # -*- coding: utf-8 -*-
 from __future__ import unicode_literals
 
-from django.core.management.base import BaseCommand, CommandError
-
 import itertools as it, operator as op, functools as ft
 from optparse import make_option
 from xmlrpclib import ServerProxy,\
 	Error as XMLRPCError, Fault as XMLRPCFault
 from pprint import pformat
 import getpass
+
+from django.core.management.base import BaseCommand, CommandError
 
 
 try: from yaml import load, dump
