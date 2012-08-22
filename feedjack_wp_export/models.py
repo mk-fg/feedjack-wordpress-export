@@ -1,7 +1,8 @@
 #-*- coding: utf-8 -*-
 
 import itertools as it, operator as op, functools as ft
-from xmlrpclib import ServerProxy, Error as XMLRPCError
+from xmlrpclib import ServerProxy,\
+	Binary as RPCBinary, Error as RPCError
 
 from django.core.exceptions import ObjectDoesNotExist, ValidationError
 from django.utils.importlib import import_module
@@ -261,7 +262,7 @@ class ExportTask(PersistentRPCTask):
 				' non-existing object id(s): subscriber={}, post={}'.format(subscriber_id, post) )
 			return
 		try: subscriber.send(post, wp_api=self.api_proxy(subscriber.export))
-		except XMLRPCError as err:
+		except RPCError as err:
 			log.debug('Failed to export post: {!r}'.format(post))
 			raise self.retry(exc=err)
 
