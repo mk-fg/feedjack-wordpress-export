@@ -41,7 +41,6 @@ default_post_parameters = dict(
 # # + any other fields supported by wp_insert_post,
 # #  see https://codex.wordpress.org/Function_Reference/wp_insert_post
 
-# TODO: per-export defaults
 default_post_parameters.update(getattr( settings,
 	'FEEDJACK_WP_EXPORT_POST_DEFAULTS', dict() ))
 
@@ -85,11 +84,11 @@ class TaxonomyTerm(models.Model):
 		if self.term_id: dump += (u' (id: {})' if dump else u'id={}').format(self.term_id)
 		return dump
 
-	def save(self):
+	def save(self, *argz, **kwz):
 		if not self.term_name and not self.term_id:
 			raise ValidationError( 'Either term_name or'
 				' term_id should be non-empty for TaxonomyTerm' )
-		super(TaxonomyTerm, self).save()
+		super(TaxonomyTerm, self).save(*argz, **kwz)
 
 
 class ExportSubscriber(models.Model):
