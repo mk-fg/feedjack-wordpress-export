@@ -50,5 +50,9 @@ setup(
 		'yaml': ['PyYAML'] },
 
 	packages = find_packages(),
+	entry_points = {
+		'feedjack_wp_export.post_processors':
+			['examples = feedjack_wp_export.entry_point_examples'] },
+
 	package_data = {'': ['README.txt']},
 	exclude_package_data = {'': ['README.*']} )

@@ -71,6 +71,8 @@ entry_points
 	def proc_func(post, post_data, wp_api):
 		do_stuff()
 
+See entry_point_examples.py
+
 
 
 Usage
