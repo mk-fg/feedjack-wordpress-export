@@ -4,12 +4,16 @@ import itertools as it, operator as op, functools as ft
 from xmlrpclib import ServerProxy, Error as XMLRPCError
 
 from django.core.exceptions import ObjectDoesNotExist, ValidationError
+from django.utils.importlib import import_module
+from django.utils.functional import lazy, SimpleLazyObject
 from django.db.models import signals
 from django.db import models
 from django.conf import settings
 
 from feedjack.models import Site, Feed, Post
-from celery import Task, task
+from celery import Task, task, chain
+
+from . import entry_point_processors
 
 import logging
 log = logging.getLogger(__name__)
@@ -43,6 +47,22 @@ default_post_parameters = dict(
 
 default_post_parameters.update(getattr( settings,
 	'FEEDJACK_WP_EXPORT_POST_DEFAULTS', dict() ))
+
+
+def hook_function(name):
+	mod, func = name.rsplit('.', 1)
+	err_ep = None
+	try:
+		import pkg_resources
+		for ep in pkg_resources.iter_entry_points(entry_point_processors):
+			if ep.name == mod: return getattr(ep.load(), func)
+	except ImportError as err_ep: pass # entry_point functionality is optional
+	try:
+		mod = import_module(mod)
+		return getattr(mod, func)
+	except (ImportError, AttributeError) as err:
+		raise ImportError( 'Failed to import function {!r} from entry_point/module'
+			' {!r} (error(s): {})'.format(func, mod, ', '.join(bytes(e) for e in [err_ep, err] if e)) )
 
 
 class Export(models.Model):
@@ -98,9 +118,21 @@ class ExportSubscriber(models.Model):
 
 	is_active = models.BooleanField( 'is active', default=True,
 		help_text='If disabled, this subscriber will not appear in the site or in the site\'s feed.' )
-
 	taxonomies = models.ManyToManyField( TaxonomyTerm,
 		null=True, blank=True, help_text='Taxonomy terms to add to each imported Post.' )
+	processors = models.TextField( blank=True,
+		help_text=(
+			'Functions to process each exported Post with, separated by spaces or newlines.'
+			' Each one will be passed (lazy) Post object and dict of data to export'
+				' to wordpress API as args and "wp_api" keyword arg (in case API access is needed).'
+			' It must return a post_data dict to pass to the'
+				' next processor (in the same order as they are specified).'
+			' post_data returned from the last processor will be exported.'
+			' Functions should be specified either as a name of an entry_point'
+			' ({}) function in a "{{ep.name}}.{{func_name}}" format (example:'
+			' myhandlers.fetch_enclosures), or as a "{{module}}.{{func_name}}"'
+			' (if named entry point cannot be found, example: mymodule.feeds.process_post).' )\
+			.format(entry_point_processors) )
 
 	class Meta:
 		ordering = 'export', '-is_active', 'feed'
@@ -109,10 +141,19 @@ class ExportSubscriber(models.Model):
 		return u'{0.feed} to {0.export}{1}'.format(
 			self, u' (INACTIVE)' if not self.is_active else u'' )
 
-	def send(self, post, wp_link=None):
-		# TODO: export through AtomPub as well
-		if wp_link is None: wp_link = ServerProxy(self.export.url, use_datetime=True)
+
+	def send(self, post, wp_api=None):
+		'Prepare and export either Post object or dict of wordpress-api data.'
+		if isinstance(post, Post): return self.export_post(post, wp_api=wp_api)
+		elif isinstance(post, dict): return self.export_data(post, wp_api=wp_api)
+		else:
+			raise ValidationError( 'Unknown type'
+				' of post to export ({!r}): {!r}'.format(post, type(post)) )
+
+	def export_post(self, post, wp_api=None):
 		log.debug('Exporting post {!r} to {!r}'.format(post, self))
+
+		# Initial post_data, passed either to processors or exported as-is
 		post_data = default_post_parameters.copy()
 		post_data.update(
 			post_title=post.title,
@@ -129,33 +170,100 @@ class ExportSubscriber(models.Model):
 				else:
 					log.warn( 'Linked (subscriber: {}) taxonomy term does not have'
 						' neither term_name nor term_id set (id: {}, term: {})'.format(self, term.id, term) )
-		return wp_link.wp.newPost( self.export.blog_id,
-			self.export.username, self.export.password, post_data )
+
+		processors = self.processors.strip()
+		if processors:
+			# Setup processing chain
+			processors = processors.split()
+			processors = [process_post.s(post_data, processors[0], self.id, post.id)]\
+				+ list(
+					process_post.s(func=proc, subscriber_id=self.id, post_id=post.id)
+					for proc in processors[1:] )\
+				+ [export_post.s(subscriber_id=self.id)]
+			return chain(*processors).delay()
+		else:
+			# Export post_data right here, if no further processing is needed
+			return self.export_data(post_data, wp_api=wp_api)
+
+	def export_data(self, post_data, wp_api=None):
+		assert all(k in post_data for k in ['post_title', 'post_content', 'post_date'])
+		# TODO: export through AtomPub as well
+		if wp_api is None: wp_api = WPAPIProxy.from_export_object(self.export)
+		return wp_api.newPost(post_data)
 
 
-class ExportTask(Task):
-	'Task to push the post to a wordpress instance, defined by export_id.'
+class WPAPIProxy(object):
+	'Proxy object to encapsulate url/user/password for authenticated calls.'
 
-	_wp_links = dict()
+	def __init__(self, api, blog_id, username, password):
+		self.direct_api, self.blog_id = api, blog_id
+		self.username, self.password = username, password
+	def __getattr__(self, k):
+		return ft.partial( getattr(self.direct_api.wp, k),
+			self.blog_id, self.username, self.password )
+
+	@classmethod
+	def from_export_object(cls, export):
+		return cls(
+			ServerProxy(export.url, use_datetime=True),
+			export.blog_id, export.username, export.password )
+
+
+class PersistentRPCTask(Task):
+	abstract = True
+	_wp_links = dict() # class-wide cache
+
 	def rpc_link(self, url):
 		if url not in self._wp_links:
 			self._wp_links[url] = ServerProxy(url, use_datetime=True)
 		return self._wp_links[url]
 
-	def run(self, subscriber_id, post_id):
+	def api_proxy(self, export):
+		# API proxies shouldn't be cached per-export-id, because auth may change
+		argz = op.attrgetter('url', 'blog_id', 'username', 'password')(export)
+		if argz not in self._wp_links:
+			api = self.rpc_link(argz[0])
+			self._wp_links[argz] = WPAPIProxy(api, *argz[1:])
+		return self._wp_links[argz]
+
+	def api_proxy_lazy(self, subscriber_id):
+		assert isinstance(subscriber_id, int)
+		# Mainly for processors, which most likely won't use it at all,
+		#  so there's just no point in making db queries for each one
+		return SimpleLazyObject(lambda: self.api_proxy(
+			ExportSubscriber.objects.get(id=subscriber_id).export ))
+
+
+class ProcessorTask(PersistentRPCTask):
+	'Process post_data through a given function.'
+
+	def run(self, post_data, func, subscriber_id, post_id):
+		log.debug('Running post processor hook {!r} (post_id: {})'.format(func, post_id))
+		return hook_function(func)(
+			SimpleLazyObject(lambda: Post.objects.get(id=post_id)),
+			post_data, wp_api=self.api_proxy_lazy(subscriber_id) )
+
+process_post = task()(ProcessorTask)
+
+
+class ExportTask(PersistentRPCTask):
+	'Push Post to a wordpress instance, defined by export_id.'
+
+	def run(self, post, subscriber_id):
+		assert isinstance(subscriber_id, int)
+		assert isinstance(post, (int, dict)) # either post_id or post_data dict
 		# Re-fetch objects here to make sure the most up-to-date version is used
 		try:
-			post = Post.objects.get(id=post_id)
 			subscriber = ExportSubscriber.objects.get(id=subscriber_id)
+			if isinstance(post, int): post = Post.objects.get(id=post)
 		except ObjectDoesNotExist as err:
 			log.warn( 'Received export task for'
-				' non-existing object id(s): subscriber={}, post={}'.format(subscriber_id, post_id) )
+				' non-existing object id(s): subscriber={}, post={}'.format(subscriber_id, post) )
 			return
-		try: subscriber.send(post, wp_link=self.rpc_link(subscriber.export.url))
+		try: subscriber.send(post, wp_api=self.api_proxy(subscriber.export))
 		except XMLRPCError as err:
 			log.debug('Failed to export post: {!r}'.format(post))
 			raise self.retry(exc=err)
-		log.debug('Post {!r} was successfully exported.'.format(post))
 
 export_post = task(ignore_result=True)(ExportTask)
 
@@ -176,7 +284,7 @@ def feed_update_handler(sender, instance, **kwz):
 	for n, subscriber in enumerate(subscribers, 1):
 		log.debug( 'Exporting {} posts to {!r} ({}/{})'\
 			.format(len(posts), subscriber, n, len(subscribers)) )
-		for post in posts: export_post.delay(subscriber.id, post.id)
+		for post in posts: export_post.delay(post=post.id, subscriber_id=subscriber.id)
 	dirty_posts.difference_update(posts)
 	log.debug('{} unexported posts left'.format(len(dirty_posts)))
 

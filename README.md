@@ -64,6 +64,14 @@ urlpatterns = patterns('',
 	./manage.py migrate
 
 
+##### Post processors
+
+entry_points
+
+	def proc_func(post, post_data, wp_api):
+		do_stuff()
+
+
 
 Usage
 --------------------
