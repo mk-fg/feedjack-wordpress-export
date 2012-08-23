@@ -8,45 +8,20 @@ from django.db import models
 class Migration(SchemaMigration):
 
     def forwards(self, orm):
-        # Adding model 'Export'
-        db.create_table('feedjack_wp_export_export', (
-            ('id', self.gf('django.db.models.fields.AutoField')(primary_key=True)),
-            ('url', self.gf('django.db.models.fields.CharField')(max_length=255)),
-            ('blog_id', self.gf('django.db.models.fields.PositiveIntegerField')()),
-            ('user', self.gf('django.db.models.fields.CharField')(max_length=63)),
-            ('password', self.gf('django.db.models.fields.CharField')(max_length=63)),
-        ))
-        db.send_create_signal('feedjack_wp_export', ['Export'])
 
-        # Adding unique constraint on 'Export', fields ['url', 'blog_id']
-        db.create_unique('feedjack_wp_export_export', ['url', 'blog_id'])
+        # Changing field 'TaxonomyTerm.term_name'
+        db.alter_column('feedjack_wp_export_taxonomyterm', 'term_name', self.gf('django.db.models.fields.CharField')(max_length=255))
 
-        # Adding model 'ExportSubscriber'
-        db.create_table('feedjack_wp_export_exportsubscriber', (
-            ('id', self.gf('django.db.models.fields.AutoField')(primary_key=True)),
-            ('export', self.gf('django.db.models.fields.related.ForeignKey')(related_name=u'subscriber_set', to=orm['feedjack_wp_export.Export'])),
-            ('feed', self.gf('django.db.models.fields.related.ForeignKey')(related_name=u'exports', to=orm['feedjack.Feed'])),
-            ('is_active', self.gf('django.db.models.fields.BooleanField')(default=True)),
-        ))
-        db.send_create_signal('feedjack_wp_export', ['ExportSubscriber'])
-
-        # Adding unique constraint on 'ExportSubscriber', fields ['export', 'feed']
-        db.create_unique('feedjack_wp_export_exportsubscriber', ['export_id', 'feed_id'])
-
+        # Changing field 'Export.url'
+        db.alter_column('feedjack_wp_export_export', 'url', self.gf('django.db.models.fields.CharField')(max_length=255))
 
     def backwards(self, orm):
-        # Removing unique constraint on 'ExportSubscriber', fields ['export', 'feed']
-        db.delete_unique('feedjack_wp_export_exportsubscriber', ['export_id', 'feed_id'])
 
-        # Removing unique constraint on 'Export', fields ['url', 'blog_id']
-        db.delete_unique('feedjack_wp_export_export', ['url', 'blog_id'])
+        # Changing field 'TaxonomyTerm.term_name'
+        db.alter_column('feedjack_wp_export_taxonomyterm', 'term_name', self.gf('django.db.models.fields.CharField')(max_length=254))
 
-        # Deleting model 'Export'
-        db.delete_table('feedjack_wp_export_export')
-
-        # Deleting model 'ExportSubscriber'
-        db.delete_table('feedjack_wp_export_exportsubscriber')
-
+        # Changing field 'Export.url'
+        db.alter_column('feedjack_wp_export_export', 'url', self.gf('django.db.models.fields.CharField')(max_length=255))
 
     models = {
         'feedjack.feed': {
@@ -84,19 +59,28 @@ class Migration(SchemaMigration):
             'name': ('django.db.models.fields.CharField', [], {'unique': 'True', 'max_length': '64'})
         },
         'feedjack_wp_export.export': {
-            'Meta': {'ordering': "(u'url', u'blog_id', u'user')", 'unique_together': "((u'url', u'blog_id'),)", 'object_name': 'Export'},
+            'Meta': {'ordering': "('url', 'blog_id', 'username')", 'unique_together': "(('url', 'blog_id'),)", 'object_name': 'Export'},
             'blog_id': ('django.db.models.fields.PositiveIntegerField', [], {}),
             'id': ('django.db.models.fields.AutoField', [], {'primary_key': 'True'}),
             'password': ('django.db.models.fields.CharField', [], {'max_length': '63'}),
             'url': ('django.db.models.fields.CharField', [], {'max_length': '255'}),
-            'user': ('django.db.models.fields.CharField', [], {'max_length': '63'})
+            'username': ('django.db.models.fields.CharField', [], {'max_length': '63'})
         },
         'feedjack_wp_export.exportsubscriber': {
-            'Meta': {'ordering': "(u'export', u'is_active', u'feed')", 'unique_together': "((u'export', u'feed'),)", 'object_name': 'ExportSubscriber'},
-            'export': ('django.db.models.fields.related.ForeignKey', [], {'related_name': "u'subscriber_set'", 'to': "orm['feedjack_wp_export.Export']"}),
-            'feed': ('django.db.models.fields.related.ForeignKey', [], {'related_name': "u'exports'", 'to': "orm['feedjack.Feed']"}),
+            'Meta': {'ordering': "('export', '-is_active', 'feed')", 'object_name': 'ExportSubscriber'},
+            'export': ('django.db.models.fields.related.ForeignKey', [], {'related_name': "'subscriber_set'", 'to': "orm['feedjack_wp_export.Export']"}),
+            'feed': ('django.db.models.fields.related.ForeignKey', [], {'related_name': "'exports'", 'to': "orm['feedjack.Feed']"}),
             'id': ('django.db.models.fields.AutoField', [], {'primary_key': 'True'}),
-            'is_active': ('django.db.models.fields.BooleanField', [], {'default': 'True'})
+            'is_active': ('django.db.models.fields.BooleanField', [], {'default': 'True'}),
+            'processors': ('django.db.models.fields.TextField', [], {'blank': 'True'}),
+            'taxonomies': ('django.db.models.fields.related.ManyToManyField', [], {'symmetrical': 'False', 'to': "orm['feedjack_wp_export.TaxonomyTerm']", 'null': 'True', 'blank': 'True'})
+        },
+        'feedjack_wp_export.taxonomyterm': {
+            'Meta': {'ordering': "('taxonomy', 'term_name', 'term_id')", 'unique_together': "(('taxonomy', 'term_name'), ('taxonomy', 'term_id'))", 'object_name': 'TaxonomyTerm'},
+            'id': ('django.db.models.fields.AutoField', [], {'primary_key': 'True'}),
+            'taxonomy': ('django.db.models.fields.CharField', [], {'max_length': '63'}),
+            'term_id': ('django.db.models.fields.PositiveIntegerField', [], {'null': 'True', 'blank': 'True'}),
+            'term_name': ('django.db.models.fields.CharField', [], {'max_length': '255', 'blank': 'True'})
         }
     }
 

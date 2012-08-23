@@ -67,7 +67,7 @@ def hook_function(name):
 
 
 class Export(models.Model):
-	url = models.CharField( max_length=2047,
+	url = models.CharField( max_length=255,
 		help_text='URL of an XML-RPC interface, usually'
 				' something like https://mywordpress.com/xmlrpc.php' )
 	blog_id = models.PositiveIntegerField(
@@ -88,7 +88,7 @@ class Export(models.Model):
 
 class TaxonomyTerm(models.Model):
 	taxonomy = models.CharField(max_length=63)
-	term_name = models.CharField(max_length=254, blank=True,
+	term_name = models.CharField(max_length=255, blank=True,
 		help_text='Name of taxonomy term.'
 			' term_id is preferred over this name, if available.'
 			' Either term_name, term_id or both of these must be set.' )
