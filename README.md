@@ -150,7 +150,7 @@ App adds some management commands for convenience.
 Use these like any other django commands throught django-admin.py or manage.py
 script in the django project root, like this:
 
-	./manage.py wp_getTaxonomies http://localhost/wordpress/xmlrpc.php -u admin:waka_waka -t category
+	./manage.py wp_getTaxonomies http://localhost/wordpress/xmlrpc.php -u admin:password -t category
 
 Get more info on each command and instructions on how to use it through -h or --help options:
 
@@ -163,6 +163,12 @@ Get more info on each command and instructions on how to use it through -h or --
 Whole point of the project is to create a processing pipelines for feeds, so
 each ExportSubscriber allows attaching an arbitrary handler functions to each
 passed Post object.
+
+Returned dict (which should in most cases be derived from passed post_data dict)
+will be passed to
+[wp_newPost](https://codex.wordpress.org/XML-RPC_WordPress_API/Posts#wp.newPost)
+WordPress API function, so any additional parameters can be set there
+accordingly.
 
 Functions can be imported from specified entry points
 ("feedjack_wp_export.post_processors") or modules.
@@ -180,3 +186,13 @@ Note that passed wp_api object can be queried like `wp_file =
 wp_api.uploadFile(dict(name=..., ...))` and represents [WordPress XML-RPC
 API](https://codex.wordpress.org/XML-RPC_WordPress_API) with authentication and
 blog_id parameters already specified.
+
+
+### Taxonomies
+
+For convenience, any WordPress taxonomies can be attached to ExportSubscriber
+object, so every imported Post will be filed under these, see admin site and
+TaxonomyTerm model there for details.
+
+Any finer control over taxonomies (or any other import parameter) can,
+naturally, be acheived through Post processor functions, explained above.
