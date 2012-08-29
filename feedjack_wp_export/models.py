@@ -19,6 +19,8 @@ from . import entry_point_processors
 import logging
 log = logging.getLogger(__name__)
 
+id_types = int, long
+
 
 # See wp_newPost in wp-includes/class-wp-xmlrpc-server.php for details on these.
 
@@ -228,7 +230,7 @@ class PersistentRPCTask(Task):
 		return self._wp_links[argz]
 
 	def api_proxy_lazy(self, subscriber_id):
-		assert isinstance(subscriber_id, int)
+		assert isinstance(subscriber_id, id_types)
 		# Mainly for processors, which most likely won't use it at all,
 		#  so there's just no point in making db queries for each one
 		return SimpleLazyObject(lambda: self.api_proxy(
@@ -251,12 +253,12 @@ class ExportTask(PersistentRPCTask):
 	'Push Post to a wordpress instance, defined by export_id.'
 
 	def run(self, post, subscriber_id):
-		assert isinstance(subscriber_id, int)
-		assert isinstance(post, (int, dict)) # either post_id or post_data dict
+		assert isinstance(subscriber_id, id_types)
+		assert isinstance(post, id_types + (dict,)) # either post_id or post_data dict
 		# Re-fetch objects here to make sure the most up-to-date version is used
 		try:
 			subscriber = ExportSubscriber.objects.get(id=subscriber_id)
-			if isinstance(post, int): post = Post.objects.get(id=post)
+			if isinstance(post, id_types): post = Post.objects.get(id=post)
 		except ObjectDoesNotExist as err:
 			log.warn( 'Received export task for'
 				' non-existing object id(s): subscriber={}, post={}'.format(subscriber_id, post) )
